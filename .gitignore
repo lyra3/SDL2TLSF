@@ -1,0 +1,3 @@
+# for CLion
+.idea
+cmake-build-*
