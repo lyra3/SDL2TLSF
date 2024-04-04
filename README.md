@@ -1,2 +1,2 @@
-# SDL2TLFS
+# SDL2TLSF
 cosc594 project
