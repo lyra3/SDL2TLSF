@@ -14,7 +14,7 @@ int main() {
 	if (ptr == NULL) {
 		printf("tlsf_malloc(): Memory allocation failed\n");
 	} else {
-		printf("tlsf_malloc():Memory allocation succeeded\n");
+		printf("tlsf_malloc(): Memory allocation succeeded\n");
 	}
 
 	//	Ralloc Check

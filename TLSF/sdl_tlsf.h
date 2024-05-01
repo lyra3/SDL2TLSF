@@ -11,20 +11,33 @@
 typedef void* tlsf_instance;
 typedef void* tlsf_pool;
 
-// This
-void sdl_tlsf_init(void);
+// The current instance of tlsf
+extern tlsf_instance active_instance;
 
-// Creates a new instance of tlsf
+// Setups the tlsf instance
+void sdl_tlsf_init();
+
+// ###### INSTANCE MANAGEMENT ######
+
+// Creates a new instance of tlsf  (you can treat these as memory pools for specific data structures)
 tlsf_instance sdl_tlsf_create_instance();
 
-// Gets the current instance of tlsf
-tlsf_instance sdl_tlsf_get_current_instance(void);
+// Gets the current active instance of tlsf
+tlsf_instance sdl_tlsf_get_instance();
 
-// Sets the current instance of tlsf
+// Sets the instance of tlsf, enables the user to change which "pool" memory is accessed from.
+// For example if they wanted a specific pool for a specific data structure.
 void sdl_tlsf_set_instance(tlsf_instance instance);
 
-// Creates a memory pool within the current instance
-tlsf_pool sdl_tlsf_create_pool(void *mem, size_t bytes);
+// ###### INSTANCE MEMORY MANAGEMENT ######
+
+// Creates a memory pool within the instance
+// So this adds a memory pool to the current instance.
+tlsf_pool sdl_tlsf_add_memory(size_t bytes);
+
+// Destroys that memory pool within the instance.
+void sdl_tlsf_destroy_memory(tlsf_pool pool);
+
 
 
 
