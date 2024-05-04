@@ -2,6 +2,8 @@
 // Created by bee on 4/4/24.
 //
 
+// ls /proc
+
 #include "sdl_tlsf.h"
 
 tlsf_instance active_instance;
@@ -18,7 +20,8 @@ void sdl_tlsf_init(void) {
 tlsf_instance sdl_tlsf_create_instance() {
 
 	return NULL;
-//	return tlsf_create(srbk(bytes), bytes);
+	// use mmap for allocation
+//	return tlsf_create((bytes), bytes);
 }
 
 void sdl_tlsf_destroy() {
