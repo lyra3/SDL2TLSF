@@ -18,17 +18,8 @@ void *tlsf_malloc(void *tlsf, size_t bytes) {
 void *tlsf_calloc(tlsf_t tlsf, size_t elem_size, size_t num_elems){
 
 	unsigned char *ptr = tlsf_malloc(tlsf, elem_size * num_elems);
-
-
 	memset(ptr, 0, num_elems);
-
-	// use memset
-	for (int i = 0; i < num_elems * elem_size; i++) {
-		ptr[i] = 0;
-	}
 	return ptr;
-
-//	return calloc(num_elems, elem_size);
 }
 
 void *tlsf_realloc(tlsf_t tlsf, void *ptr, size_t size){
