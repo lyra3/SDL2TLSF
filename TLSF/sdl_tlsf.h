@@ -13,6 +13,8 @@
 // Our Memory Pool
 typedef struct tlsf_pool {
 
+	size_t pool_id;
+
 	// Memory Pool
 	pool_t pool; // Initialized with tlsf_create_pool
 	size_t bytes; //
@@ -40,10 +42,14 @@ typedef struct {
 	tlsf_t instance;
 	tlsf_pool_list tlsf_pools;
 
+	size_t num_pools;
 	size_t pool_size;
 
 	size_t total_size;
 	size_t total_used;
+
+	// TODO: Explore Thread Specific Instances for shits and giggles
+	// SDL_Mutex *lock;
 
 } tlsf_instance;
 
@@ -51,15 +57,19 @@ typedef struct {
 
 // The current instance of tlsf
 extern tlsf_instance active_instance;
+extern tlsf_instance base_instance;
 
-// Setups the tlsf instance, provide initial memory size
+// ###### INITIALIZATION ######
+// Setups the base tlsf instance, provide initial memory size
 void sdl_tlsf_init();
-
-void sdl_tlsf_init_mutex();
-void sdl_tlsf_destroy_mutex();
 
 // Setups the tlsf with a specific memory size
 void sdl_tlsf_init_with_size(size_t bytes);
+
+// Setups the mutex for tlsf
+void sdl_tlsf_init_mutex();
+
+void sdl_tlsf_quit();
 
 // ###### INSTANCE MANAGEMENT ######
 
@@ -67,29 +77,28 @@ void sdl_tlsf_init_with_size(size_t bytes);
 tlsf_instance sdl_tlsf_create_instance(size_t bytes);
 
 // Gets the current active instance of tlsf
-tlsf_instance sdl_tlsf_get_instance();
+tlsf_instance *sdl_tlsf_get_instance();
 
 // Sets the instance of tlsf, enables the user to change which "pool" memory is accessed from.
 // For example if they wanted a specific pool for a specific data structure.
-void sdl_tlsf_set_instance(tlsf_instance instance);
+void sdl_tlsf_set_instance(tlsf_instance *instance);
 
-// ###### INSTANCE MEMORY MANAGEMENT ######
-
-// Creates a memory pool within the instance
-// So this adds a memory pool to the current instance.
-// /* Add/remove memory pools. */
-// pool_t tlsf_add_pool(tlsf_t tlsf, void* mem, size_t bytes);
-// void tlsf_remove_pool(tlsf_t tlsf, pool_t pool);
-void sdl_tlsf_add_pool();
-void sdl_tlsf_remove_pool();
+// Sets the instance of tlsf to the base instance, returns the previous instance
+tlsf_instance *sdl_tlsf_rebase_instance();
 
 // Destroys that memory pool within the instance.
-void sdl_tlsf_destroy_instance();
+void sdl_tlsf_destroy_instance(tlsf_instance *instance);
 
+void sdl_tlsf_print_instance(tlsf_instance *instance);
 
+// ###### INSTANCE LOCAL MEMORY MANAGEMENT ######
+// Used within a tlsf instance to add a memory pool
+// Could be called outside if you want to add memory pools ahead of allocation
+void sdl_tlsf_add_pool();
+void sdl_tlsf_free_pool(tlsf_pool *pool);
+void sdl_tlsf_free_pool_mem(tlsf_pool *pool);
 
-
-// Memory allocation functions
+// Memory allocation functions, overloads the SDL memory functions
 void *sdl_tlsf_malloc(size_t bytes);
 void sdl_tlsf_free(void *ptr);
 void *sdl_tlsf_calloc(size_t nmemb, size_t size);
@@ -101,8 +110,7 @@ int sdl_tlsf_check_active_instance();
 int sdl_tlsf_check_pool(pool_t pool);
 
 // Helper Gadgets
-
 // Gets the  pool based on the address of the pointer
-tlsf_pool sdl_tlsf_get_pool(size_t ptr_addr);
+tlsf_pool *sdl_tlsf_get_pool(size_t ptr_addr);
 
 #endif //TLSF_SDL_TLSF_H

@@ -4,98 +4,110 @@
 
 #include "SDL/include/SDL3/SDL.h"
 #include "sdl_tlsf.h"
+#include <stdlib.h>  // For random()
 
 int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
+    sdl_tlsf_init();
 
-
-	// Initialize our "custom" memory allocator
-	sdl_tlsf_init();
-
-	SDL_Log("Mutex init\n");
-	sdl_tlsf_init_mutex();
-
-	SDL_Log("SDL_Init\n");
     if (SDL_Init(0) < 0) {
         SDL_Log("SDL_Init failed (%s)", SDL_GetError());
         return 1;
     }
 
-	void *ptr = SDL_malloc(10);
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation failed\n");
-	} else {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation succeeded\n");
-	}
+    // Testing with varied size allocations
+    const int num_allocations = 100;
+    void *pointers[num_allocations];
+    size_t sizes[num_allocations];
+
+    for (int i = 0; i < num_allocations; i++) {
+        sizes[i] = (rand() % (1024 * 1024)) + 1;  // Allocate 1 byte to 1 MB
+        pointers[i] = SDL_malloc(sizes[i]);
+        if (pointers[i] == NULL) {
+            SDL_Log("Memory allocation failed for size %zu\n", sizes[i]);
+        } else {
+            memset(pointers[i], 0, sizes[i]);  // Use the memory
+            SDL_Log("Allocated %zu bytes\n", sizes[i]);
+        }
+    }
+
+    // Randomly free and reallocate to create fragmentation
+    for (int i = 0; i < num_allocations; i++) {
+        if (rand() % 2) {  // Randomly choose blocks to free
+            SDL_free(pointers[i]);
+            pointers[i] = NULL;
+            SDL_Log("Freed memory block %d\n", i);
+        }
+    }
+
+    for (int i = 0; i < num_allocations; i++) {
+        if (pointers[i] == NULL) {
+            sizes[i] = (rand() % (512 * 1024)) + 1;  // Smaller realloc sizes
+            pointers[i] = SDL_malloc(sizes[i]);
+            if (pointers[i] == NULL) {
+                SDL_Log("Re-allocation failed for size %zu\n", sizes[i]);
+            } else {
+                memset(pointers[i], 0, sizes[i]);
+                SDL_Log("Re-allocated %zu bytes\n", sizes[i]);
+            }
+        }
+    }
 
 
-	ptr = SDL_realloc(ptr, 32);
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_realloc(): Memory reallocation failed\n");
-	} else {
-		SDL_Log("sdl_tlsf_realloc(): Memory reallocation succeeded\n");
-	}
+	// Switch to a new instance
+//	SDL_Log("Switching to a new instance\n");
+//	tlsf_instance new_instance = sdl_tlsf_create_instance((1 << 20) * 14);  // 14MB
+//	sdl_tlsf_set_instance(&new_instance);
 
-	SDL_free(ptr);
+    // Memory pressure test: Request large blocks until failure
+    void *large_blocks[10];
+    int block_index = 0;
+    while (block_index < 10) {
+        large_blocks[block_index] = SDL_malloc((1 << 20) * 10);  // 10 MB blocks
+        if (large_blocks[block_index] == NULL) {
+            SDL_Log("Failed to allocate 10 MB block\n");
+            break;
+        }
+        block_index++;
+        SDL_Log("Allocated 10 MB block %d\n", block_index);
+    }
 
-	// This check of free will never accurately check if memory is deallocated
-	// because of the way C's free() function just adds the memory to the free list
-	// and does not actually zero out the memory
-	// Research has not found a good way to check if memory is deallocated accurately.
-	// We are open to suggestions.
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_free(): Memory deallocation succeeded\n");
-	} else {
-		SDL_Log("sdl_tlsf_free(): Memory deallocation failed\n");
-	}
+    // Free large blocks
+    for (int i = 0; i < block_index; i++) {
+        SDL_free(large_blocks[i]);
+    }
 
-	ptr = SDL_calloc(32, 8);
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_calloc(): Memory allocation failed\n");
-	} else {
-		SDL_Log("sdl_tlsf_calloc(): Memory allocation succeeded\n");
-	}
+	SDL_Log("Rebasing to the base instance\n");
+//	sdl_tlsf_rebase_instance();
+	//	 Free all remaining blocks from the prior instance
+    for (int i = 0; i < num_allocations; i++) {
+        if (pointers[i]) {
+            SDL_free(pointers[i]);
+        }
+    }
 
-	SDL_free(ptr);
-
-	// Testing dynamicly adding a pool, by allocating more memory than the current pool size
-	ptr = SDL_malloc((1 << 20));
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation failed\n");
-	} else {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation succeeded\n");
-	}
-
-
-
-//	//	Double Check statuc
-//	if (sdl_tlsf_check_active_instance() == 0) {
-//		SDL_Log("sdl_tlsf_check_active_instance(): No errors\n");
+//    // Test integrity check of the memory instance
+//    if (sdl_tlsf_check_active_instance() == 0) {
+//        SDL_Log("No errors detected in TLSF instance\n");
+//    } else {
+//        SDL_Log("Errors detected in TLSF instance\n");
+//    }
+//
+//
+//	sdl_tlsf_set_instance(&new_instance);
+//	if (sdl_tlsf_check_active_instance()) {
+//		SDL_Log("Errors detected in new TLSF instance\n");
 //	} else {
-//		SDL_Log("sdl_tlsf_check_active_instance(): Errors found\n");
-//	}
-//
-//	if (active_instance.tlsf_pools.header != NULL && tlsf_get_pool(active_instance.instance) == active_instance.tlsf_pools.header -> pool) {
-//		SDL_Log("active_instance.pool_list.header: %p\n", active_instance.tlsf_pools.header);
-//
-//	}
-//	else {
-//		SDL_Log("active_instance.pool_list.header: %p\n", active_instance.tlsf_pools.header -> pool);
-//		SDL_Log("tlsf_get_pool(active_instance.instance): %p\n", tlsf_get_pool(active_instance.instance));
-//	}
-//
-//	// Double Check statuc
-//	if (sdl_tlsf_check_active_instance() == 0) {
-//		SDL_Log("sdl_tlsf_check_active_instance(): No errors\n");
-//	} else {
-//		SDL_Log("sdl_tlsf_check_active_instance(): Errors found\n");
+//		SDL_Log("No errors detected in new TLSF instance\n");
 //	}
 
+//	sdl_tlsf_destroy_instance(&new_instance);
+//	sdl_tlsf_rebase_instance();
 	SDL_Quit();
-    sdl_tlsf_destroy_instance();
+	sdl_tlsf_quit();
 
-	return 0;
 
+    return 0;
 }

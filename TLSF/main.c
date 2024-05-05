@@ -9,10 +9,10 @@
 int main() {
 
 	// Create some memory for the tlsf instance
-	void *mem = malloc(1 << 13);
+	void *mem = malloc((1 << 20) * 8);
 
 	// Create a new instance of tlsf using the memory
-	tlsf_t tlsf = tlsf_create_with_pool(mem, 1 << 13);
+	tlsf_t tlsf = tlsf_create_with_pool(mem, ((1 << 20) * 8) - tlsf_pool_overhead());
 
 	//	Malloc Check
 	void *ptr = tlsf_malloc(tlsf, 10);
@@ -90,12 +90,35 @@ int main() {
 		printf("tlsf_add_pool(): Memory allocation succeeded\n");
 	}
 
-	ptr = tlsf_malloc(tlsf, 1 << 19);
+
+	void *mem3 = malloc(1 << 20);
+	pool_t pool2 = tlsf_add_pool(tlsf, mem3, pool_size);
+	if (pool2 == NULL) {
+		printf("tlsf_add_pool(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_add_pool(): Memory allocation succeeded\n");
+	}
+
+
+	ptr = tlsf_malloc(tlsf, 1 << 20);
 	if (ptr == NULL) {
 		printf("tlsf_malloc(): Memory allocation failed\n");
 	} else {
 		printf("tlsf_malloc(): Memory allocation succeeded\n");
 	}
+	tlsf_free(tlsf, ptr);
+
+	ptr = tlsf_malloc(tlsf, 1 << 20);
+	if (ptr == NULL) {
+		printf("tlsf_malloc(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_malloc(): Memory allocation succeeded\n");
+	}
+	tlsf_free(tlsf, ptr);
+
+	// Remove the pool
+	tlsf_remove_pool(tlsf, pool);
+	tlsf_remove_pool(tlsf, pool2);
 
 
 	tlsf_destroy(tlsf);

@@ -6,11 +6,16 @@
 
 #include "sdl_tlsf.h"
 
-const size_t base_pool_size = 1 << 20;
+// Base Pool Size: 16 MB
+const size_t base_pool_size = (1 << 20) * 16;
 
 SDL_Mutex *tlsf_lock = NULL;
 
 tlsf_instance active_instance;
+tlsf_instance base_instance;
+
+// Used to keep track of the pool id
+size_t pool_id_counter = 0;
 
 // Connects the tlsf instance to SDL's memory functions
 void sdl_tlsf_init() {
@@ -20,54 +25,64 @@ void sdl_tlsf_init() {
 
 void sdl_tlsf_init_with_size(size_t bytes) {
 
-	if (tlsf_lock != NULL)
-		SDL_LockMutex(tlsf_lock);
+	pool_id_counter = 0;
 
-	active_instance = sdl_tlsf_create_instance(bytes);
+	// Override SDL's memory functions
 	SDL_SetMemoryFunctions(sdl_tlsf_malloc, sdl_tlsf_calloc, sdl_tlsf_realloc, sdl_tlsf_free);
 
+	// Create the base instance and set it as the active instance
+	base_instance = sdl_tlsf_create_instance(bytes);
+	active_instance = base_instance;
 
-
-	if (tlsf_lock != NULL)
-		SDL_UnlockMutex(tlsf_lock);
-	else
-		tlsf_lock = SDL_CreateMutex();
-
-}
-
-
-void sdl_tlsf_init_mutex() {
+	// Init our lock
 	tlsf_lock = SDL_CreateMutex();
 	if (tlsf_lock == NULL) {
 		SDL_Log("Failed to create mutex\n");
 	}
+
 }
 
-void sdl_tlsf_destroy_mutex() {
-	SDL_DestroyMutex(tlsf_lock);
+// Free the base instance
+void sdl_tlsf_quit() {
+
+
+
+	// Destroy base instance
+	sdl_tlsf_destroy_instance(&base_instance);
+
+	// Honestly our best bet at destroying the mutex
 	tlsf_lock = NULL;
 }
 
-tlsf_instance sdl_tlsf_create_instance(size_t bytes) {
+
+tlsf_instance sdl_tlsf_create_instance(size_t pool_size) {
 
 	// Create some memory for the tlsf instance
-	void *mem = mmap(NULL, bytes, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+	void *mem = mmap(NULL, pool_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (mem == MAP_FAILED) {
 		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Failed to create memory for tlsf instance\n");
 	}
 
-	active_instance.instance = tlsf_create_with_pool(mem, bytes);
+	tlsf_instance new_instance;
 
-	size_t pool_size = bytes - tlsf_pool_overhead();
+	new_instance.instance = tlsf_create_with_pool(mem, pool_size);
+	new_instance.num_pools = 1;
 
-	tlsf_pool *pool = tlsf_malloc(active_instance.instance,sizeof(tlsf_pool));
-	pool -> pool = tlsf_get_pool(active_instance.instance);
-	pool -> bytes = pool_size;
+	size_t act_size = pool_size - tlsf_pool_overhead();
+
+	// Create a new pool
+	tlsf_pool *pool = tlsf_malloc(new_instance.instance,sizeof(tlsf_pool));
+	pool -> pool = tlsf_get_pool(new_instance.instance);
+	pool -> bytes = act_size;
 	pool -> used = sizeof(tlsf_pool);
+
+	pool_id_counter += 1;
+	pool -> pool_id = pool_id_counter;
+
 
 	// Address Range
 	pool -> start = mem;
-	pool -> end = (char *)pool -> start + pool_size;
+	pool -> end = (char *)pool -> start + act_size;
 
 	// No previous or next pool
 	pool -> next = NULL;
@@ -79,70 +94,154 @@ tlsf_instance sdl_tlsf_create_instance(size_t bytes) {
 	poolList.tail = pool;
 
 	// Assign the pool list to the tlsf instance
-	active_instance.tlsf_pools = poolList;
+	new_instance.tlsf_pools = poolList;
 
 	// This is how we know if we need to add more memory to the pool
-	active_instance.total_size = pool_size;
-	active_instance.total_used = sizeof(tlsf_pool);
+	new_instance.total_size = pool_size;
+	new_instance.total_used = sizeof(tlsf_pool);
 
-	active_instance.pool_size = base_pool_size;
+	new_instance.pool_size = pool_size;
 
-	return active_instance;
+	// Setup Lock
+	// Store the current instance
+	//	tlsf_instance *current_instance = sdl_tlsf_get_instance();
+	//
+	//	// Set the new instance as the active instance
+	//	sdl_tlsf_set_instance(&new_instance);
+	//
+	//	// Use the new instance to create the lock
+	//	new_instance.lock = SDL_CreateMutex();
+	//	if (new_instance.lock == NULL) {
+	//		SDL_Log("Failed to create mutex\n");
+	//	}
+	//
+	//	// Set the instance back to the current instance
+	//	sdl_tlsf_set_instance(current_instance);
+
+
+	return new_instance;
 }
 
-void sdl_tlsf_destroy_instance() {
+tlsf_instance *sdl_tlsf_get_instance() {
+	return &active_instance;
+}
 
-	SDL_DestroyMutex(tlsf_lock);
-	tlsf_lock = NULL;
-//	if (active_instance.instance != NULL) {
-//		tlsf_destroy(active_instance.instance);
-//		munmap(tlsf_get_pool(active_instance.instance), active_instance.bytes);
-//	}
+void sdl_tlsf_set_instance(tlsf_instance *instance) {
+	SDL_LockMutex(tlsf_lock);
+	active_instance = *instance;
+	SDL_UnlockMutex(tlsf_lock);
+}
+
+tlsf_instance *sdl_tlsf_rebase_instance() {
+
+	SDL_LockMutex(tlsf_lock);
+
+	tlsf_instance *current_instance = sdl_tlsf_get_instance();
+	active_instance = base_instance;
+
+	SDL_UnlockMutex(tlsf_lock);
+	return current_instance;
+}
+
+void sdl_tlsf_destroy_instance(tlsf_instance *instance) {
+
+	SDL_LockMutex(tlsf_lock);
+
+	sdl_tlsf_print_instance(instance);
+
+	// Free all pools starting from the head to ensure we don't skip any pools
+    tlsf_pool *pool = instance -> tlsf_pools.tail;
+    while (pool != instance -> tlsf_pools.header) {
+
+		SDL_Log("Freeing Pool: %zu\n", pool -> pool_id);
+        tlsf_pool *next = pool->next;
+        sdl_tlsf_free_pool_mem(pool);
+        pool = next;  // Move to the next pool
+    }
+
+	// Free the last pool. From what I can gather
+	// the last pool is kinda special and can't be freed as a pool
+	pool_t pool_mem = pool -> pool;
+
+	// Free pool data structure from the pool itself (kinda wacky ik)
+	tlsf_free(active_instance.instance, pool);
+
+	// SysCall Free
+	munmap(pool_mem, pool -> bytes);
+
+	SDL_UnlockMutex(tlsf_lock);
+}
+
+void sdl_tlsf_print_instance(tlsf_instance *instance) {
+
+	SDL_LockMutex(tlsf_lock);
+
+	tlsf_pool *pool = instance -> tlsf_pools.header;
+
+	while (pool != NULL) {
+		SDL_Log("Pool ID: %zu\n", pool -> pool_id);
+		SDL_Log("Pool Start: %p\n", pool -> start);
+		SDL_Log("Pool End: %p\n", pool -> end);
+		SDL_Log("Pool Bytes: %zu\n", pool -> bytes);
+		SDL_Log("Pool Used: %zu\n", pool -> used);
+		SDL_Log("\n");
+
+		pool = pool -> next;
+	}
+
+	SDL_UnlockMutex(tlsf_lock);
+
 }
 
 void *sdl_tlsf_malloc(size_t bytes) {
 
-//	SDL_Log("Malloc Called on %ld bytes\n", bytes);
+
 
 	SDL_LockMutex(tlsf_lock);
-	if (tlsf_lock == NULL) {
-		SDL_Log("Not Locked\n");
+
+	// Makes sure we are not allocating more memory than can fit in a pool
+	if (bytes >= (active_instance.pool_size) - tlsf_pool_overhead()) {
+		SDL_Log("Requested memory size is greater than pool size\n");
+
+		SDL_UnlockMutex(tlsf_lock);
+		return NULL;
 	}
 
 
-
-
-
 	// Check if we have enough memory to allocate
-	SDL_Log("Total Size: %ld\n", active_instance.total_size);
-	SDL_Log("Total Used: %ld\n", active_instance.total_used);
-	SDL_Log("Extra Bytes: %ld\n", active_instance.total_size - active_instance.total_used);
-	while (active_instance.total_size - active_instance.total_used < bytes) {
+	if (active_instance.total_size - active_instance.total_used < bytes) {
 
 		// Add another pool to the instance
 		sdl_tlsf_add_pool();
 	}
 
-	SDL_Log("Malloc Called on %ld bytes\n", bytes);
-	void *ptr = tlsf_malloc(active_instance.instance, bytes);
+	void *ptr = tlsf_malloc(active_instance.instance, bytes);;
 
-	// If we successfully allocated memory
-	if (ptr) {
+	if (!ptr) {
 
-		// Loop through the pool list and check if the pointer is within the range of the pool
-//		tlsf_pool pool = sdl_tlsf_get_pool((size_t)ptr);
-//		if (pool.pool != NULL) {
-//			pool.used += bytes;
-//		}
+		// Test if the problem is having a contiguous block of memory
+		sdl_tlsf_add_pool();
+		ptr = tlsf_malloc(active_instance.instance, bytes);
 
-		active_instance.total_used += bytes;
-
-	} else {
-		SDL_Log("Failed to allocate memory\n");
-		return NULL;
-
+		if (!ptr) {
+			SDL_Log("Failed to allocate memory\n");
+			SDL_UnlockMutex(tlsf_lock);
+			return NULL;
+		}
 	}
 
+	size_t block_size = tlsf_block_size(ptr);
+
+	active_instance.total_used += block_size;
+
+	// Update the pool list
+	tlsf_pool *pool = sdl_tlsf_get_pool((size_t)ptr);
+	if (pool == NULL) {
+		SDL_Log("Failed to Assign Pool\n");
+		SDL_UnlockMutex(tlsf_lock);
+		return NULL;
+	}
+	pool -> used += block_size;
 
 
 	SDL_UnlockMutex(tlsf_lock);
@@ -151,30 +250,70 @@ void *sdl_tlsf_malloc(size_t bytes) {
 
 void sdl_tlsf_free(void *ptr) {
 
-//	SDL_Log("Free Called on %p\n", ptr);
-
 	SDL_LockMutex(tlsf_lock);
 
+	// Get the pool that the pointer is within
+	tlsf_pool *pool = sdl_tlsf_get_pool((size_t) ptr);
 
+	// Get the size of the freed block
+	size_t block_size = tlsf_block_size(ptr);
 
-	// TODO: Check if this is the last block in a pool
-	// And if so, we can remove the pool
-
+	// Actually free the memory
 	tlsf_free(active_instance.instance, ptr);
 
+	// Update the pool list
+	pool -> used -= block_size;
+
+	// Check how much memory is left in the pool
+	if (pool -> used <= 0 && active_instance.num_pools > 1) {
+		// Remove the pool
+		sdl_tlsf_free_pool(pool);
+	}
 
 	SDL_UnlockMutex(tlsf_lock);
 }
 
 void *sdl_tlsf_calloc(size_t nmemb, size_t size) {
 
-
-
 	SDL_LockMutex(tlsf_lock);
 
+	size_t bytes = nmemb * size;
 
+	// Check if we have enough memory to allocate
+	if (active_instance.total_size - active_instance.total_used < bytes) {
+
+		// Add another pool to the instance
+		sdl_tlsf_add_pool();
+	}
 
 	void *ptr = tlsf_calloc(active_instance.instance, size, nmemb);
+
+	if (!ptr) {
+
+		// Test if the problem is having a contiguous block of memory
+		sdl_tlsf_add_pool();
+		ptr = tlsf_calloc(active_instance.instance, size, nmemb);
+
+		if (!ptr) {
+			SDL_Log("Failed to allocate memory\n");
+			SDL_UnlockMutex(tlsf_lock);
+			return NULL;
+		}
+	}
+
+	size_t block_size = tlsf_block_size(ptr);
+
+	active_instance.total_used += block_size;
+
+	// Update the pool list
+	tlsf_pool *pool = sdl_tlsf_get_pool((size_t)ptr);
+	if (pool == NULL) {
+		SDL_Log("Failed to Assign Pool\n");
+		SDL_UnlockMutex(tlsf_lock);
+		return NULL;
+	}
+	pool -> used += block_size;
+
 
 	SDL_UnlockMutex(tlsf_lock);
 
@@ -183,17 +322,65 @@ void *sdl_tlsf_calloc(size_t nmemb, size_t size) {
 
 void *sdl_tlsf_realloc(void *ptr, size_t size) {
 
-
-
 	SDL_LockMutex(tlsf_lock);
 
+    // Get the current block size
+    size_t current_size = ptr ? tlsf_block_size(ptr) : 0;
 
+    // Check if downsizing or upsizing
+    if (size > current_size) {
+        // Make sure we are not reallocating more memory than can fit in a pool
+        if (size >= (active_instance.pool_size - tlsf_pool_overhead())) {
+            SDL_Log("Requested realloc size is greater than pool size\n");
+            SDL_UnlockMutex(tlsf_lock);
+            return NULL;
+        }
 
-	void *ret_ptr = tlsf_realloc(active_instance.instance, ptr, size);
+        // Check if we need more total memory than available
+        if (active_instance.total_size - active_instance.total_used < size - current_size) {
+            sdl_tlsf_add_pool();  // Add another pool to the instance
+        }
+    }
 
-	SDL_UnlockMutex(tlsf_lock);
+    // Attempt to reallocate memory
+    void *new_ptr = tlsf_realloc(active_instance.instance, ptr, size);
+    if (!new_ptr && size > current_size) {
+        // If realloc fails and it's a size increase, try adding a pool and reallocating
+        sdl_tlsf_add_pool();
+        new_ptr = tlsf_realloc(active_instance.instance, ptr, size);
+    }
 
-	return ret_ptr;
+    // If still fails, or it's a decrease and failed, return NULL
+    if (!new_ptr) {
+        SDL_Log("Failed to reallocate memory\n");
+        SDL_UnlockMutex(tlsf_lock);
+        return NULL;
+    }
+
+    // Adjust the used memory counters
+    if (new_ptr != ptr) {
+        // Successfully reallocated to a new block
+        tlsf_pool *old_pool = sdl_tlsf_get_pool((size_t)ptr);
+        tlsf_pool *new_pool = sdl_tlsf_get_pool((size_t)new_ptr);
+
+        // Update the old and new pool used memory
+        if (old_pool) old_pool->used -= current_size;
+        if (new_pool) new_pool->used += tlsf_block_size(new_ptr);
+
+        // Check if the old pool is empty and consider removing it
+        if (old_pool && old_pool->used <= 0 && active_instance.num_pools > 1) {
+            sdl_tlsf_free_pool(old_pool);
+        }
+    } else {
+        // Reallocated in place, adjust only the current pool's used memory
+        tlsf_pool *pool = sdl_tlsf_get_pool((size_t)new_ptr);
+        if (pool) {
+            pool->used += tlsf_block_size(new_ptr) - current_size;
+        }
+    }
+
+    SDL_UnlockMutex(tlsf_lock);
+    return new_ptr;
 }
 
 int sdl_tlsf_check_active_instance() {
@@ -219,7 +406,7 @@ int sdl_tlsf_check_pool(pool_t pool) {
 }
 
 // Loop through the pool list and check if the pointer is within the range of the pool
-tlsf_pool sdl_tlsf_get_pool(size_t ptr_addr) {
+tlsf_pool *sdl_tlsf_get_pool(size_t ptr_addr) {
 
 	SDL_LockMutex(tlsf_lock);
 
@@ -230,78 +417,121 @@ tlsf_pool sdl_tlsf_get_pool(size_t ptr_addr) {
 		if (ptr_addr >= (size_t)pool -> start && ptr_addr <= (size_t)pool -> end) {
 
 			SDL_UnlockMutex(tlsf_lock);
-			return *pool;
+			return pool;
 		}
 		pool = pool -> next;
 	}
 
-	tlsf_pool empty_pool;
-	empty_pool.pool = NULL;
-
 	SDL_UnlockMutex(tlsf_lock);
 
-	return empty_pool;
+	return NULL;
 
 
 }
 
 void sdl_tlsf_add_pool() {
 
-	SDL_Log("Adding Pool\n");
-
 	SDL_LockMutex(tlsf_lock);
 
 	size_t pool_size = active_instance.pool_size;
+	size_t act_size = pool_size - tlsf_pool_overhead();
 
 	void *ptr = mmap(NULL, pool_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (ptr == MAP_FAILED) {
 		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Failed to create memory for tlsf instance\n");
 	}
 
-	SDL_Log("Ptr: %p\n", ptr);
-
-	tlsf_pool *pool = sdl_tlsf_malloc(sizeof(tlsf_pool));
+	pool_t pool = tlsf_add_pool(active_instance.instance, ptr, act_size);
 	if (pool == NULL) {
-		SDL_Log("Failed to allocate memory for pool\n");
+		SDL_Log("Failed to add pool to instance\n");
 	}
 
+	// Create a new pool
+	tlsf_pool *new_pool = tlsf_malloc(active_instance.instance, sizeof(tlsf_pool));
+	new_pool -> pool = pool;
+	new_pool -> bytes = act_size;
+	new_pool -> used = sizeof(tlsf_pool);
 
-	pool -> pool = tlsf_add_pool(active_instance.instance, ptr, pool_size);
-	if (pool -> pool == NULL) {
-		SDL_Log("Failed to add pool\n");
-	}
-
-	//
-	pool -> bytes = pool_size;
-	pool -> used = sizeof(tlsf_pool);
+	pool_id_counter += 1;
+	new_pool -> pool_id = pool_id_counter;
 
 	// Address Range
-	pool -> start = ptr;
-	pool -> end = (char *)ptr + (pool_size);
+	new_pool -> start = ptr;
+	new_pool -> end = (char *)new_pool -> start + act_size;
 
-	// Get last pool
-	tlsf_pool *node = active_instance.tlsf_pools.tail;
+	// No Next but prev is tail
+	new_pool -> next = NULL;
+	new_pool -> prev = active_instance.tlsf_pools.tail;
 
-
-	// Add the new pool to the end of the list
-	node->next = pool;
-
-	// Set the new pool's previous to the last pool
-	pool->next = NULL;
-	pool->prev = node;
-
-
-	// Set the new pool as the tail of the list
-	active_instance.tlsf_pools.tail = pool;
+	// Update the pool list
+	active_instance.tlsf_pools.tail -> next = new_pool;
+	active_instance.tlsf_pools.tail = new_pool;
 
 	// Increase the total size of the instance based on the pool size
-	active_instance.total_size += pool->bytes;
+	active_instance.num_pools += 1;
+	active_instance.total_size += pool_size;
 
-	SDL_Log("Total Size: %ld\n", active_instance.total_size);
+	SDL_Log("Adding Pool: %zu to Instance\n", new_pool -> pool_id);
 
-	// Cause the debugger is fucking stupid
-	tlsf_instance temp_instance = active_instance;
-	SDL_Log("Bleh");
+	SDL_UnlockMutex(tlsf_lock);
+}
+
+void sdl_tlsf_free_pool(tlsf_pool *pool) {
+
+	SDL_LockMutex(tlsf_lock);
+
+	// Removing the pool from the list
+	tlsf_pool *prev = pool -> prev;
+	tlsf_pool *next = pool -> next;
+
+	// Update the prev and next's that are connected to the pool
+	if (prev) prev->next = next;
+	if (next) next->prev = prev;
+
+	// Update the header and tail if necessary
+	if (pool == active_instance.tlsf_pools.header) {
+		active_instance.tlsf_pools.header = next;
+	}
+
+	if (pool == active_instance.tlsf_pools.tail) {
+		active_instance.tlsf_pools.tail = prev;
+	}
+
+	// Update Active Instance
+	active_instance.num_pools -= 1;
+	active_instance.total_size -= active_instance.pool_size;
+
+	sdl_tlsf_free_pool_mem(pool);
+
+//	pool_t pool_mem = pool -> pool;
+//
+//	// Free pool data structure from the pool itself (kinda wacky ik)
+//	tlsf_free(active_instance.instance, pool);
+//
+//	// Free the pool
+//	tlsf_remove_pool(active_instance.instance, pool_mem);
+//
+//	// SysCall Free
+//	munmap(pool_mem, pool -> bytes);
+
+
+	SDL_UnlockMutex(tlsf_lock);
+}
+
+void sdl_tlsf_free_pool_mem(tlsf_pool *pool) {
+
+	SDL_LockMutex(tlsf_lock);
+
+	pool_t pool_mem = pool -> pool;
+
+	// Free pool data structure from the pool itself (kinda wacky ik)
+	tlsf_free(active_instance.instance, pool);
+
+	// Free the pool
+	tlsf_remove_pool(active_instance.instance, pool_mem);
+
+	// SysCall Free
+	munmap(pool_mem, pool -> bytes);
 
 	SDL_UnlockMutex(tlsf_lock);
 }
