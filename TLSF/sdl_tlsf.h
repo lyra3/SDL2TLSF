@@ -20,6 +20,9 @@ typedef struct tlsf_pool {
 	size_t bytes; //
 	size_t used;
 
+	// Actual Memory
+	void *mem;
+
 	// Address Range
 	void* start; // from mmap
 	void* end; // bytes + start
@@ -56,8 +59,8 @@ typedef struct {
 //size_t base_pool_size = 1 << 20;
 
 // The current instance of tlsf
-extern tlsf_instance active_instance;
-extern tlsf_instance base_instance;
+extern tlsf_instance *active_instance;
+extern tlsf_instance *base_instance;
 
 // ###### INITIALIZATION ######
 // Setups the base tlsf instance, provide initial memory size
@@ -74,7 +77,7 @@ void sdl_tlsf_quit();
 // ###### INSTANCE MANAGEMENT ######
 
 // Creates a new instance of tlsf  (you can treat these as memory pools for specific data structures)
-tlsf_instance sdl_tlsf_create_instance(size_t bytes);
+tlsf_instance *sdl_tlsf_create_instance(size_t bytes);
 
 // Gets the current active instance of tlsf
 tlsf_instance *sdl_tlsf_get_instance();

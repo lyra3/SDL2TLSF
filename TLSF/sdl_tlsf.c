@@ -6,13 +6,18 @@
 
 #include "sdl_tlsf.h"
 
+
+// Built-in Valgrind Memcheck
+#include <valgrind/memcheck.h>
+
+
 // Base Pool Size: 16 MB
 const size_t base_pool_size = (1 << 20) * 16;
 
 SDL_Mutex *tlsf_lock = NULL;
 
-tlsf_instance active_instance;
-tlsf_instance base_instance;
+tlsf_instance *active_instance;
+tlsf_instance *base_instance;
 
 // Used to keep track of the pool id
 size_t pool_id_counter = 0;
@@ -45,23 +50,27 @@ void sdl_tlsf_init_with_size(size_t bytes) {
 // Free the base instance
 void sdl_tlsf_quit() {
 
+	// Rebase the instance, just in case
+	sdl_tlsf_rebase_instance();
 
-
-	// Destroy base instance
-	sdl_tlsf_destroy_instance(&base_instance);
+	// Destroy active instance
+	sdl_tlsf_destroy_instance(base_instance);
 
 	// Honestly our best bet at destroying the mutex
 	tlsf_lock = NULL;
 }
 
 
-tlsf_instance sdl_tlsf_create_instance(size_t pool_size) {
+tlsf_instance *sdl_tlsf_create_instance(size_t pool_size) {
 
 	// Create some memory for the tlsf instance
 	void *mem = mmap(NULL, pool_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
 	if (mem == MAP_FAILED) {
 		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Failed to create memory for tlsf instance\n");
 	}
+
+	// Notify Valgrind about the allocation
+    VALGRIND_MALLOCLIKE_BLOCK(mem, pool_size, 0, 0);
 
 	tlsf_instance new_instance;
 
@@ -71,9 +80,10 @@ tlsf_instance sdl_tlsf_create_instance(size_t pool_size) {
 	size_t act_size = pool_size - tlsf_pool_overhead();
 
 	// Create a new pool
-	tlsf_pool *pool = tlsf_malloc(new_instance.instance,sizeof(tlsf_pool));
+	tlsf_pool *pool = tlsf_calloc(new_instance.instance, sizeof(tlsf_pool), 1);
+	pool -> mem = mem;
 	pool -> pool = tlsf_get_pool(new_instance.instance);
-	pool -> bytes = act_size;
+	pool -> bytes = pool_size;
 	pool -> used = sizeof(tlsf_pool);
 
 	pool_id_counter += 1;
@@ -143,40 +153,64 @@ tlsf_instance *sdl_tlsf_rebase_instance() {
 	return current_instance;
 }
 
-void sdl_tlsf_destroy_instance(tlsf_instance *instance) {
+void sdl_tlsf_destroy_instance() {
 
 	SDL_LockMutex(tlsf_lock);
 
-	sdl_tlsf_print_instance(instance);
+	tlsf_instance current_instance = active_instance;
 
-	// Free all pools starting from the head to ensure we don't skip any pools
-    tlsf_pool *pool = instance -> tlsf_pools.tail;
-    while (pool != instance -> tlsf_pools.header) {
+	tlsf_pool *head = active_instance.tlsf_pools.header;
+	tlsf_pool *tail = active_instance.tlsf_pools.tail;
 
-		SDL_Log("Freeing Pool: %zu\n", pool -> pool_id);
-        tlsf_pool *next = pool->next;
-        sdl_tlsf_free_pool_mem(pool);
-        pool = next;  // Move to the next pool
-    }
+
+	tlsf_pool *free_pool = tail;
+
+	// Go backwards through the pools and free them
+	// But leave the head pool, for special handling
+	while (free_pool != head) {
+
+		if (free_pool -> pool_id == 2) {
+			SDL_Log("Break\n");
+		}
+
+		SDL_Log("Freeing Pool: %zu\n", free_pool -> pool_id);
+		tlsf_pool *prev = free_pool -> prev;
+		sdl_tlsf_free_pool(free_pool);
+		free_pool = prev;
+	}
 
 	// Free the last pool. From what I can gather
 	// the last pool is kinda special and can't be freed as a pool
-	pool_t pool_mem = pool -> pool;
+	pool_t pool_mem = head -> pool;
+	size_t size = head -> bytes;
+	void *mem = head -> mem;
+
+	SDL_Log("Freeing Pool: %zu\n", head -> pool_id);
 
 	// Free pool data structure from the pool itself (kinda wacky ik)
-	tlsf_free(active_instance.instance, pool);
+	tlsf_free(active_instance.instance, head);
+
+
+	// Notify Valgrind that the pool is being freed
+	VALGRIND_FREELIKE_BLOCK(mem, 0);
 
 	// SysCall Free
-	munmap(pool_mem, pool -> bytes);
+	munmap(mem, size);
 
-	SDL_UnlockMutex(tlsf_lock);
+
+	// Mutex is init in the base instance, so you can't really access it anymore
+	// But it's ok because you destroy the base instance last
+	if (active_instance.instance != base_instance.instance) {
+		SDL_UnlockMutex(tlsf_lock);
+	}
+
 }
 
-void sdl_tlsf_print_instance(tlsf_instance *instance) {
+void sdl_tlsf_print_instance(tlsf_instance instance) {
 
 	SDL_LockMutex(tlsf_lock);
 
-	tlsf_pool *pool = instance -> tlsf_pools.header;
+	tlsf_pool *pool = instance.tlsf_pools.header;
 
 	while (pool != NULL) {
 		SDL_Log("Pool ID: %zu\n", pool -> pool_id);
@@ -264,11 +298,19 @@ void sdl_tlsf_free(void *ptr) {
 	// Update the pool list
 	pool -> used -= block_size;
 
+
+	// Update the total used memory
+	active_instance.total_used -= block_size;
+
 	// Check how much memory is left in the pool
-	if (pool -> used <= 0 && active_instance.num_pools > 1) {
+	if (pool -> used <= 64 && active_instance.num_pools > 1) {
+
+		SDL_Log("Freeing Tail");
+
 		// Remove the pool
 		sdl_tlsf_free_pool(pool);
 	}
+
 
 	SDL_UnlockMutex(tlsf_lock);
 }
@@ -441,15 +483,19 @@ void sdl_tlsf_add_pool() {
 		SDL_LogCritical(SDL_LOG_CATEGORY_APPLICATION, "Failed to create memory for tlsf instance\n");
 	}
 
+	// Notify Valgrind about the allocation
+    VALGRIND_MALLOCLIKE_BLOCK(ptr, pool_size, 0, 0);
+
 	pool_t pool = tlsf_add_pool(active_instance.instance, ptr, act_size);
 	if (pool == NULL) {
 		SDL_Log("Failed to add pool to instance\n");
 	}
 
 	// Create a new pool
-	tlsf_pool *new_pool = tlsf_malloc(active_instance.instance, sizeof(tlsf_pool));
+	tlsf_pool *new_pool = tlsf_calloc(active_instance.instance, sizeof(tlsf_pool), 1);
+	new_pool -> mem = ptr;
 	new_pool -> pool = pool;
-	new_pool -> bytes = act_size;
+	new_pool -> bytes = pool_size;
 	new_pool -> used = sizeof(tlsf_pool);
 
 	pool_id_counter += 1;
@@ -464,8 +510,11 @@ void sdl_tlsf_add_pool() {
 	new_pool -> prev = active_instance.tlsf_pools.tail;
 
 	// Update the pool list
-	active_instance.tlsf_pools.tail -> next = new_pool;
+	tlsf_pool *current_tail = active_instance.tlsf_pools.tail;
+	current_tail -> next = new_pool;
 	active_instance.tlsf_pools.tail = new_pool;
+
+	tlsf_instance *current_instance = sdl_tlsf_get_instance();
 
 	// Increase the total size of the instance based on the pool size
 	active_instance.num_pools += 1;
@@ -479,6 +528,10 @@ void sdl_tlsf_add_pool() {
 void sdl_tlsf_free_pool(tlsf_pool *pool) {
 
 	SDL_LockMutex(tlsf_lock);
+
+	size_t id = pool -> pool_id;
+
+	SDL_Log("Freeing Pool: %zu to Instance\n", id);
 
 	// Removing the pool from the list
 	tlsf_pool *prev = pool -> prev;
@@ -503,16 +556,7 @@ void sdl_tlsf_free_pool(tlsf_pool *pool) {
 
 	sdl_tlsf_free_pool_mem(pool);
 
-//	pool_t pool_mem = pool -> pool;
-//
-//	// Free pool data structure from the pool itself (kinda wacky ik)
-//	tlsf_free(active_instance.instance, pool);
-//
-//	// Free the pool
-//	tlsf_remove_pool(active_instance.instance, pool_mem);
-//
-//	// SysCall Free
-//	munmap(pool_mem, pool -> bytes);
+	SDL_Log("Freed Pool: %zu to Instance\n", id);
 
 
 	SDL_UnlockMutex(tlsf_lock);
@@ -522,16 +566,25 @@ void sdl_tlsf_free_pool_mem(tlsf_pool *pool) {
 
 	SDL_LockMutex(tlsf_lock);
 
+	void *mem = pool -> mem;
+	size_t size = pool -> bytes;
 	pool_t pool_mem = pool -> pool;
 
-	// Free pool data structure from the pool itself (kinda wacky ik)
+
+	// Free pool data structure from the pool itself (kinda wacky)
+	sdl_tlsf_get_pool((size_t) pool);
+
 	tlsf_free(active_instance.instance, pool);
 
 	// Free the pool
 	tlsf_remove_pool(active_instance.instance, pool_mem);
 
+
+	// Notify Valgrind that the pool is being freed
+	VALGRIND_FREELIKE_BLOCK(mem, 0);
+
 	// SysCall Free
-	munmap(pool_mem, pool -> bytes);
+	munmap(mem, size);
 
 	SDL_UnlockMutex(tlsf_lock);
 }
