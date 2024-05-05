@@ -1,4 +1,7 @@
 //
+// Created by bee on 5/4/24.
+//
+//
 // Created by bee on 4/4/24.
 //
 
@@ -9,13 +12,6 @@ int main(int argc, char *argv[]) {
     (void)argc;
     (void)argv;
 
-
-
-	// Initialize our "custom" memory allocator
-	sdl_tlsf_init();
-
-	SDL_Log("Mutex init\n");
-	sdl_tlsf_init_mutex();
 
 	SDL_Log("SDL_Init\n");
     if (SDL_Init(0) < 0) {
@@ -60,41 +56,7 @@ int main(int argc, char *argv[]) {
 
 	SDL_free(ptr);
 
-	// Testing dynamicly adding a pool, by allocating more memory than the current pool size
-	ptr = SDL_malloc((1 << 20));
-	if (ptr == NULL) {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation failed\n");
-	} else {
-		SDL_Log("sdl_tlsf_malloc(): Memory allocation succeeded\n");
-	}
-
-
-
-//	//	Double Check statuc
-//	if (sdl_tlsf_check_active_instance() == 0) {
-//		SDL_Log("sdl_tlsf_check_active_instance(): No errors\n");
-//	} else {
-//		SDL_Log("sdl_tlsf_check_active_instance(): Errors found\n");
-//	}
-//
-//	if (active_instance.tlsf_pools.header != NULL && tlsf_get_pool(active_instance.instance) == active_instance.tlsf_pools.header -> pool) {
-//		SDL_Log("active_instance.pool_list.header: %p\n", active_instance.tlsf_pools.header);
-//
-//	}
-//	else {
-//		SDL_Log("active_instance.pool_list.header: %p\n", active_instance.tlsf_pools.header -> pool);
-//		SDL_Log("tlsf_get_pool(active_instance.instance): %p\n", tlsf_get_pool(active_instance.instance));
-//	}
-//
-//	// Double Check statuc
-//	if (sdl_tlsf_check_active_instance() == 0) {
-//		SDL_Log("sdl_tlsf_check_active_instance(): No errors\n");
-//	} else {
-//		SDL_Log("sdl_tlsf_check_active_instance(): Errors found\n");
-//	}
-
 	SDL_Quit();
-    sdl_tlsf_destroy_instance();
 
 	return 0;
 
