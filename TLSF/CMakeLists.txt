@@ -17,7 +17,7 @@ add_library(TLSF STATIC tlsf.c)
 ### GENERIC TEST ###
 # Create the Test executable
 add_executable(Generic_Test main.c
-		sdl_thread_test.c)
+)
 
 # Link the TLSF library with the Test executable
 target_link_libraries(Generic_Test TLSF)
@@ -33,7 +33,10 @@ include_directories(SDL/include)
 
 ### SDL_TLSF COMPATIBILITY LAYER ###
 # Create the SDL_TLSF static library
-add_library(SDL_TLSF STATIC sdl_tlsf.c)
+add_library(SDL_TLSF STATIC SDL_TLSF/sdl_tlsf.c
+		MemTasks/mem_ops.c
+		MemTasks/mem_ops.h
+)
 
 # Link the SDL3 library with the SDL_TLSF library
 target_link_libraries(SDL_TLSF TLSF SDL3::SDL3)
@@ -47,13 +50,15 @@ add_executable(SDL_Test main_sdl.c)
 target_link_libraries(SDL_Test SDL_TLSF TLSF SDL3::SDL3)
 
 ### Vanilla SDL Test ###
-add_executable(Vanilla_SDL vanilla_sdl.c)
+add_executable(Vanilla_SDL vanilla_sdl.c
+		MemTasks/mem_ops.c
+		MemTasks/mem_ops.h)
 
 # Link the SDL3 library with the Test executable
 target_link_libraries(Vanilla_SDL SDL3::SDL3)
 
 
-add_executable(sdl_thread_test sdl_thread_test.c
-		sdl_thread_test.c)
-
-target_link_libraries(sdl_thread_test SDL3::SDL3)
+#add_executable(sdl_thread_test sdl_thread_test.c
+#		sdl_thread_test.c)
+#
+#target_link_libraries(sdl_thread_test SDL3::SDL3)

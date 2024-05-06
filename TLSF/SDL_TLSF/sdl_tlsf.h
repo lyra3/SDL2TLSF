@@ -7,8 +7,8 @@
 
 #include <sys/mman.h>
 
-#include "tlsf.h"
-#include "SDL/include/SDL3/SDL.h"
+#include "../tlsf.h"
+#include "../SDL/include/SDL3/SDL.h"
 
 // Our Memory Pool
 typedef struct tlsf_pool {
@@ -48,6 +48,7 @@ typedef struct {
 	size_t num_pools;
 	size_t pool_size;
 
+	// Total size of all pools
 	size_t total_size;
 	size_t total_used;
 
