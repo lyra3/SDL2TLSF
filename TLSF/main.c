@@ -4,13 +4,18 @@
 
 #include "tlsf.h"
 #include <stdio.h>
+#include <stdlib.h>
 
 int main() {
 
-	hello();
+	// Create some memory for the tlsf instance
+	void *mem = malloc((1 << 20) * 8);
+
+	// Create a new instance of tlsf using the memory
+	tlsf_t tlsf = tlsf_create_with_pool(mem, ((1 << 20) * 8) - tlsf_pool_overhead());
 
 	//	Malloc Check
-	void *ptr = tlsf_malloc(NULL, 10);
+	void *ptr = tlsf_malloc(tlsf, 10);
 	if (ptr == NULL) {
 		printf("tlsf_malloc(): Memory allocation failed\n");
 	} else {
@@ -18,7 +23,7 @@ int main() {
 	}
 
 	//	Ralloc Check
-	ptr = tlsf_realloc(NULL, ptr, 32);
+	ptr = tlsf_realloc(tlsf, ptr, 32);
 	if(ptr == NULL){
 		printf("tlsf_realloc(): Memory reallocation failed\n");
 	} else {
@@ -26,7 +31,7 @@ int main() {
 	}
 
 	// Fralloc Check
-	tlsf_free(NULL, ptr);
+	tlsf_free(tlsf, ptr);
 
 	// This check of free will never accurately check if memory is deallocated
 	// because of the way C's free() function just adds the memory to the free list
@@ -41,7 +46,7 @@ int main() {
 	}
 
 	// Cowlick Check
-	void *ptr2 = tlsf_calloc(NULL, 32, 8);
+	void *ptr2 = tlsf_calloc(tlsf, 32, 8);
 	if(ptr2 == NULL) {
 		printf("tlsf_cowlic(): Initialized memory allocation failed\n");
 	} else if (ptr2 != 0) {
@@ -65,6 +70,58 @@ int main() {
 
 	}
 
-	tlsf_free(NULL, ptr2);
+	// Check if tlsf is goated
+	int check = tlsf_check(tlsf);
+	if(check != 0){
+		printf("tlsf_check(): Memory check failed\n");
+	} else {
+		printf("tlsf_check(): Memory check succeeded\n");
+	}
+
+	tlsf_free(tlsf, ptr2);
+
+	// Testing Adding a pool
+	void *mem2 = malloc(1 << 20);
+	size_t pool_size = (1 << 20) - tlsf_pool_overhead();
+	pool_t pool = tlsf_add_pool(tlsf, mem2, pool_size);
+	if (pool == NULL) {
+		printf("tlsf_add_pool(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_add_pool(): Memory allocation succeeded\n");
+	}
+
+
+	void *mem3 = malloc(1 << 20);
+	pool_t pool2 = tlsf_add_pool(tlsf, mem3, pool_size);
+	if (pool2 == NULL) {
+		printf("tlsf_add_pool(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_add_pool(): Memory allocation succeeded\n");
+	}
+
+
+	ptr = tlsf_malloc(tlsf, 1 << 20);
+	if (ptr == NULL) {
+		printf("tlsf_malloc(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_malloc(): Memory allocation succeeded\n");
+	}
+	tlsf_free(tlsf, ptr);
+
+	ptr = tlsf_malloc(tlsf, 1 << 20);
+	if (ptr == NULL) {
+		printf("tlsf_malloc(): Memory allocation failed\n");
+	} else {
+		printf("tlsf_malloc(): Memory allocation succeeded\n");
+	}
+	tlsf_free(tlsf, ptr);
+
+	// Remove the pool
+	tlsf_remove_pool(tlsf, pool);
+	tlsf_remove_pool(tlsf, pool2);
+
+
+	tlsf_destroy(tlsf);
+	free(mem);
 	return 0;
 }

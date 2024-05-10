@@ -1190,6 +1190,7 @@ void tlsf_free(tlsf_t tlsf, void* ptr)
         block = block_merge_next(control, block);
         block_insert(control, block);
     }
+	ptr = NULL;
 }
 
 /*
@@ -1265,10 +1266,7 @@ void* tlsf_realloc(tlsf_t tlsf, void* ptr, size_t size)
 
 void *tlsf_calloc(tlsf_t tlsf, size_t elem_size, size_t num_elems){
 
-    unsigned char *ptr = tlsf_malloc(tlsf, elem_size * num_elems);
-    for (int i = 0; i < num_elems * elem_size; i++) {
-        ptr[i] = 0;
-    }
-    return ptr;
-
+	void *ptr = tlsf_malloc(tlsf, elem_size * num_elems);
+	memset(ptr, 0, elem_size * num_elems);
+	return ptr;
 }
