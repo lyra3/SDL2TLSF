@@ -197,7 +197,7 @@ void memory_thread_test(int seed) {
 }
 
 
-#define BLOCK_SIZE (1024 * 1024) * 50 // Each block is 50MB
+#define BLOCK_SIZE (1024 * 1024) * 1000 // Each block is 50MB
 #define MAX_BLOCKS 100000   // Support up to 1,000,000 MB
 void window_test(const char *title) {
 
@@ -265,4 +265,67 @@ void window_test(const char *title) {
     SDL_free(memory_blocks);
     SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
+}
+
+void tlsf_best_case_test(int seed) {
+
+	srand(seed); // Ensure different seeds for different threads
+
+
+	const int num_operations = 5000;
+    const size_t max_alloc_size = (1 << 20);  // 1MB
+
+    // Arrays to hold pointers and sizes
+    void **pointers = (void **)SDL_malloc(num_operations * sizeof(void *));
+    size_t *sizes = (size_t *)SDL_malloc(num_operations * sizeof(size_t));
+
+    if (!pointers || !sizes) {
+        SDL_Log("Failed to allocate memory for test structures.");
+        if (pointers) SDL_free(pointers);
+        if (sizes) SDL_free(sizes);
+        SDL_Quit();
+    }
+
+    // Allocation phase with random sizes
+    for (int i = 0; i < num_operations; i++) {
+        sizes[i] = rand() % max_alloc_size + 1;  // Allocate between 1 byte and max_alloc_size
+        pointers[i] = SDL_malloc(sizes[i]);
+        if (!pointers[i]) {
+            SDL_Log("Failed to allocate memory of size %zu.", sizes[i]);
+            continue;
+        }
+        SDL_memset(pointers[i], 0, sizes[i]);
+    }
+
+    // Mixed reallocation and deallocation phase
+    for (int i = 0; i < num_operations; i++) {
+        int index = rand() % num_operations;
+        if (pointers[index]) {
+            SDL_free(pointers[index]);
+            pointers[index] = NULL;  // Clear the pointer after freeing
+
+            // Random decision to either allocate new memory or skip
+            if (rand() % 2) {
+                sizes[index] = rand() % max_alloc_size + 1;
+                pointers[index] = SDL_malloc(sizes[index]);
+                if (pointers[index]) {
+                    SDL_memset(pointers[index], 0, sizes[index]);
+                } else {
+                    SDL_Log("Failed to reallocate memory block at index %d", index);
+                }
+            }
+        }
+    }
+
+    // Final cleanup: Free any remaining allocated memory
+    for (int i = 0; i < num_operations; i++) {
+        if (pointers[i]) {
+            SDL_free(pointers[i]);
+            pointers[i] = NULL;
+        }
+    }
+
+    // Clean up arrays
+    SDL_free(pointers);
+    SDL_free(sizes);
 }
