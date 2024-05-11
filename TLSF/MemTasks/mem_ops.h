@@ -24,5 +24,6 @@ void mem_speed_test(MemoryTestConfig config, int seed);
 void memory_stress_test(int seed);
 void mem_thread_test(int seed);
 void window_test(const char *title);
+void tlsf_best_case_test(int seed);
 
 #endif //TLSF_MEM_OPS_H
